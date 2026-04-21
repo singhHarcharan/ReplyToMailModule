@@ -58,7 +58,8 @@ def step4_send_reply(replier: GmailReplier, thread_id: str):
     print(f"\n--- Step 4: Send reply to thread {thread_id} ---")
     result = replier.reply(
         thread_id=thread_id,
-        reply_body="This is a test reply sent via the GmailReplier module."
+        reply_body="This is a test reply sent via the GmailReplier module.",
+        reply_to="46248742640089516201987776980031ver2@mg.upwork.com"
     )
     print(f"  Reply sent successfully!")
     print(f"  Sent Message ID : {result['id']}")
@@ -74,8 +75,8 @@ if __name__ == "__main__":
     if not threads:
         exit(1)
 
-    # Pick the first thread for testing (change index if you want a different one)
-    target_thread_id = threads[0]["id"]
+    # Hardcoded thread ID for testing — change this to your target thread
+    target_thread_id = "19db07f9e9862566"
 
     # Step 3 — inspect the thread so you can verify it before replying
     step3_inspect_thread(replier, target_thread_id)

@@ -113,19 +113,20 @@ class GmailReplier:
         return ""
 
     def _build_reply(self, original_message: dict, reply_body: str,
-                     thread_id: str, html: bool = False) -> dict:
+                     thread_id: str, html: bool = False,
+                     reply_to: str = None) -> dict:
         """
         Build an RFC-2822 reply message and return it encoded for the API.
 
         Sets the required headers so the reply is threaded correctly:
-          - To          → original sender
+          - To          → reply_to (if provided) → Reply-To header → From header
           - Subject     → Re: <original subject>
           - In-Reply-To → Message-ID of the message being replied to
           - References  → existing References + Message-ID
         """
         message_id  = self._get_header(original_message, "Message-ID")
         subject     = self._get_header(original_message, "Subject")
-        sender      = self._get_header(original_message, "From")
+        sender      = reply_to or self._get_header(original_message, "Reply-To") or self._get_header(original_message, "From")
         references  = self._get_header(original_message, "References")
 
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
@@ -150,7 +151,8 @@ class GmailReplier:
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         return {"raw": raw, "threadId": thread_id}
 
-    def reply(self, thread_id: str, reply_body: str, html: bool = False) -> dict:
+    def reply(self, thread_id: str, reply_body: str, html: bool = False,
+              reply_to: str = None) -> dict:
         """
         Reply to the latest message in a thread.
 
@@ -158,13 +160,14 @@ class GmailReplier:
             thread_id:  Gmail thread ID to reply to.
             reply_body: Plain-text (or HTML) body for the reply.
             html:       Set True to send reply_body as HTML.
+            reply_to:   Override the recipient address (ignores Reply-To/From headers).
 
         Returns:
             The sent Message resource returned by the Gmail API.
         """
         thread   = self.get_thread(thread_id)
         original = self._latest_message(thread)
-        payload  = self._build_reply(original, reply_body, thread_id, html=html)
+        payload  = self._build_reply(original, reply_body, thread_id, html=html, reply_to=reply_to)
 
         sent = (
             self.service.users()

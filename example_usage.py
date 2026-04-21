@@ -12,7 +12,7 @@ replier = GmailReplier(
 
 # 2. Reply to a thread (plain text)
 result = replier.reply(
-    thread_id="YOUR_THREAD_ID_HERE",
+    thread_id="room_820aae3784a5fdb2d0afb219188c0056@email.upwork.com",
     reply_body="Hi, thanks for your email! I'll get back to you shortly."
 )
 print("Sent message ID:", result["id"])
