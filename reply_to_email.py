@@ -62,25 +62,22 @@ class GmailReplier:
 
         if os.path.exists(self.token_path):
             creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+        elif os.environ.get("GOOGLE_TOKEN_JSON"):
+            creds = Credentials.from_authorized_user_info(
+                json.loads(os.environ["GOOGLE_TOKEN_JSON"]), SCOPES
+            )
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                if os.path.exists(self.token_path):
+                    with open(self.token_path, "w") as f:
+                        f.write(creds.to_json())
             else:
-                client_config = {
-                    "installed": {
-                        "client_id":     self.client_id,
-                        "client_secret": self.client_secret,
-                        "redirect_uris": ["http://localhost"],
-                        "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri":     "https://oauth2.googleapis.com/token",
-                    }
-                }
-                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                creds = flow.run_local_server(port=0)
-
-            with open(self.token_path, "w") as f:
-                f.write(creds.to_json())
+                raise RuntimeError(
+                    "No valid credentials found. Set GOOGLE_TOKEN_JSON env var "
+                    "with the contents of token.json."
+                )
 
         return build("gmail", "v1", credentials=creds)
 
