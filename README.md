@@ -61,7 +61,8 @@ pip install -r requirements.txt
 
 ```
 ReplyToEmail_Module/
-├── reply_to_email.py   # Core module
+├── reply_to_email.py   # Core GmailReplier module
+├── app.py              # Flask REST API wrapper
 ├── test_reply.py       # Step-by-step test script
 ├── example_usage.py    # Quick usage examples
 ├── requirements.txt    # Python dependencies
@@ -246,11 +247,107 @@ result = replier.reply(
 )
 ```
 
+### Reply to a specific address (override recipient)
+
+```python
+result = replier.reply(
+    thread_id="YOUR_THREAD_ID_HERE",
+    reply_body="Hi, following up on your request.",
+    reply_to="custom-recipient@example.com"
+)
+```
+
 ### Fetch a thread directly
 
 ```python
 thread = replier.get_thread("YOUR_THREAD_ID_HERE")
 print(thread)
+```
+
+---
+
+## Flask REST API
+
+`app.py` wraps `GmailReplier` in a lightweight Flask server. Start it with:
+
+```bash
+python app.py
+# Runs on http://localhost:5000
+```
+
+### `GET /search`
+
+Search Gmail and return matching thread IDs.
+
+**Query params:**
+
+| Param | Required | Description                                      |
+|-------|----------|--------------------------------------------------|
+| `q`   | Yes      | Any Gmail search query (e.g. `subject:test from:someone@gmail.com`) |
+
+**Response:**
+
+```json
+{
+  "threads": [
+    {
+      "thread_id": "19db07f9e9862566",
+      "subject": "Re: Your inquiry",
+      "from": "sender@example.com",
+      "date": "Mon, 21 Apr 2026 10:00:00 +0000"
+    }
+  ]
+}
+```
+
+**Example:**
+
+```bash
+curl "http://localhost:5000/search?q=subject:invoice"
+```
+
+---
+
+### `POST /reply`
+
+Reply to a Gmail thread.
+
+**Request body (JSON):**
+
+| Field        | Type     | Required | Description                                         |
+|--------------|----------|----------|-----------------------------------------------------|
+| `thread_id`  | `string` | Yes      | Gmail thread ID                                     |
+| `reply_body` | `string` | Yes      | Body text of the reply                              |
+| `reply_to`   | `string` | No       | Override recipient address                          |
+| `html`       | `bool`   | No       | Send `reply_body` as HTML (default `false`)         |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message_id": "19db07f9e9862567",
+  "thread_id": "19db07f9e9862566"
+}
+```
+
+**Examples:**
+
+```bash
+# Plain text reply
+curl -X POST http://localhost:5000/reply \
+  -H "Content-Type: application/json" \
+  -d '{"thread_id": "19db07f9e9862566", "reply_body": "Thanks for reaching out!"}'
+
+# HTML reply with a custom recipient
+curl -X POST http://localhost:5000/reply \
+  -H "Content-Type: application/json" \
+  -d '{
+    "thread_id": "19db07f9e9862566",
+    "reply_body": "<p>Thanks for reaching out!</p>",
+    "html": true,
+    "reply_to": "custom@example.com"
+  }'
 ```
 
 ---
@@ -284,13 +381,14 @@ Reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from the `.env` file automat
 
 ---
 
-### `reply(thread_id, reply_body, html=False) → dict`
+### `reply(thread_id, reply_body, html=False, reply_to=None) → dict`
 
-| Parameter    | Type   | Default | Description                              |
-|--------------|--------|---------|------------------------------------------|
-| `thread_id`  | `str`  | —       | Gmail thread ID to reply to              |
-| `reply_body` | `str`  | —       | Body text of the reply                   |
-| `html`       | `bool` | `False` | Set `True` to send `reply_body` as HTML  |
+| Parameter    | Type   | Default | Description                                                                     |
+|--------------|--------|---------|---------------------------------------------------------------------------------|
+| `thread_id`  | `str`  | —       | Gmail thread ID to reply to                                                     |
+| `reply_body` | `str`  | —       | Body text of the reply                                                          |
+| `html`       | `bool` | `False` | Set `True` to send `reply_body` as HTML                                         |
+| `reply_to`   | `str`  | `None`  | Override recipient address. Falls back to `Reply-To` header, then `From` header |
 
 Returns the sent [Message resource](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages) from the Gmail API.
 
