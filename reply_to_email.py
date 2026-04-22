@@ -6,14 +6,17 @@ Simple module to reply to an email thread using the Gmail API.
 Requirements:
     pip install google-auth google-auth-oauthlib google-api-python-client python-dotenv
 
-.env file (required):
-    GOOGLE_CLIENT_ID=your_client_id
-    GOOGLE_CLIENT_SECRET=your_client_secret
+Environment variables:
+    GMAIL_ACCOUNTS  JSON object mapping email address → token JSON contents
+                    e.g. {"user@example.com": {"token": "...", "refresh_token": "...", ...}}
+
+    For single-account fallback (legacy):
+    GOOGLE_TOKEN_JSON  Contents of token.json for a single account
 
 Usage:
     from reply_to_email import GmailReplier
 
-    replier = GmailReplier()
+    replier = GmailReplier(from_email="user@example.com")
     replier.reply(
         thread_id="<your-thread-id>",
         reply_body="Thanks for reaching out!"
@@ -30,7 +33,6 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 load_dotenv()
@@ -39,44 +41,65 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.send",
           "https://www.googleapis.com/auth/gmail.readonly"]
 
 
+def _load_accounts_map() -> dict:
+    """Parse GMAIL_ACCOUNTS env var into a dict of {email: token_dict}."""
+    raw = os.environ.get("GMAIL_ACCOUNTS")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"GMAIL_ACCOUNTS env var is not valid JSON: {e}")
+
+
 class GmailReplier:
-    def __init__(self, token_path: str = "token.json"):
+    def __init__(self, from_email: str = None):
         """
-        Reads GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the .env file.
+        Build a Gmail service for the given sender email address.
+
+        Looks up the OAuth token from GMAIL_ACCOUNTS env var (a JSON map of
+        email → token dict). Falls back to GOOGLE_TOKEN_JSON for single-account
+        setups when from_email is not provided.
 
         Args:
-            token_path: Path where the access/refresh token is cached
-                        after the first browser login.
+            from_email: The Gmail address to send from. Must exist as a key in
+                        the GMAIL_ACCOUNTS mapping (or omit for legacy single-account mode).
         """
-        self.token_path    = token_path
-        self.client_id     = os.environ["GOOGLE_CLIENT_ID"]
-        self.client_secret = os.environ["GOOGLE_CLIENT_SECRET"]
-        self.service       = self._authenticate()
-
-    # ------------------------------------------------------------------
-    # Auth
-    # ------------------------------------------------------------------
+        self.from_email = from_email
+        self.service = self._authenticate()
 
     def _authenticate(self):
         creds = None
 
-        if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+        if self.from_email:
+            accounts = _load_accounts_map()
+            if self.from_email not in accounts:
+                raise RuntimeError(
+                    f"No OAuth token found for '{self.from_email}'. "
+                    "Add it to the GMAIL_ACCOUNTS environment variable."
+                )
+            token_info = accounts[self.from_email]
+            # token_info may be a dict or a JSON string
+            if isinstance(token_info, str):
+                token_info = json.loads(token_info)
+            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
         elif os.environ.get("GOOGLE_TOKEN_JSON"):
             creds = Credentials.from_authorized_user_info(
                 json.loads(os.environ["GOOGLE_TOKEN_JSON"]), SCOPES
+            )
+        else:
+            raise RuntimeError(
+                "from_email is required. Set GMAIL_ACCOUNTS env var with a "
+                "JSON mapping of email addresses to their OAuth token JSON."
             )
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                if os.path.exists(self.token_path):
-                    with open(self.token_path, "w") as f:
-                        f.write(creds.to_json())
             else:
                 raise RuntimeError(
-                    "No valid credentials found. Set GOOGLE_TOKEN_JSON env var "
-                    "with the contents of token.json."
+                    f"Credentials for '{self.from_email}' are invalid or expired "
+                    "and cannot be refreshed automatically."
                 )
 
         return build("gmail", "v1", credentials=creds)
@@ -123,12 +146,11 @@ class GmailReplier:
         """
         message_id  = self._get_header(original_message, "Message-ID")
         subject     = self._get_header(original_message, "Subject")
-        sender      = reply_to or self._get_header(original_message, "Reply-To") or self._get_header(original_message, "From")
+        recipient   = reply_to or self._get_header(original_message, "Reply-To") or self._get_header(original_message, "From")
         references  = self._get_header(original_message, "References")
 
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
 
-        # Build References chain
         if references:
             new_references = f"{references} {message_id}"
         else:
@@ -140,7 +162,7 @@ class GmailReplier:
         else:
             msg = MIMEText(reply_body, "plain")
 
-        msg["To"]          = sender
+        msg["To"]          = recipient
         msg["Subject"]     = reply_subject
         msg["In-Reply-To"] = message_id
         msg["References"]  = new_references

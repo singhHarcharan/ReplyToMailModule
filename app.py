@@ -5,10 +5,16 @@ Flask API wrapper around GmailReplier.
 
 POST /reply
     Body (JSON):
+        from_email  string  (required)  Gmail address to send from (must be in GMAIL_ACCOUNTS mapping)
         thread_id   string  (required)  Gmail thread ID
         reply_body  string  (required)  Reply content
         reply_to    string  (optional)  Override recipient address
         html        bool    (optional)  Send body as HTML (default false)
+
+GET /search
+    Query params:
+        from_email  string  (required)  Gmail address to search in
+        q           string  (required)  Gmail search query (e.g. subject:test from:someone@gmail.com)
 
 Run:
     python app.py
@@ -18,7 +24,6 @@ from flask import Flask, request, jsonify
 from reply_to_email import GmailReplier
 
 app = Flask(__name__)
-replier = GmailReplier()
 
 
 @app.route("/", methods=["GET"])
@@ -30,13 +35,20 @@ def health():
 def search():
     """
     Find thread IDs by searching Gmail.
-    Query params: q (any Gmail search query), e.g. subject:test from:someone@gmail.com
+    Query params:
+        from_email  (required) Gmail address whose inbox to search
+        q           (required) Gmail search query
     """
+    from_email = request.args.get("from_email")
     q = request.args.get("q")
+
+    if not from_email:
+        return jsonify({"error": "from_email query param is required"}), 400
     if not q:
         return jsonify({"error": "q query param is required (e.g. ?q=subject:test)"}), 400
 
     try:
+        replier = GmailReplier(from_email=from_email)
         result = replier.service.users().messages().list(userId="me", q=q, maxResults=10).execute()
         messages = result.get("messages", [])
         if not messages:
@@ -44,8 +56,10 @@ def search():
 
         seen = {}
         for m in messages:
-            msg = replier.service.users().messages().get(userId="me", id=m["id"], format="metadata",
-                                                         metadataHeaders=["Subject", "From", "Date"]).execute()
+            msg = replier.service.users().messages().get(
+                userId="me", id=m["id"], format="metadata",
+                metadataHeaders=["Subject", "From", "Date"]
+            ).execute()
             tid = msg.get("threadId")
             if tid not in seen:
                 headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
@@ -57,6 +71,8 @@ def search():
                 }
 
         return jsonify({"threads": list(seen.values())}), 200
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -67,9 +83,12 @@ def reply():
     if not data:
         return jsonify({"error": "Request body must be JSON"}), 400
 
+    from_email = data.get("from_email")
     thread_id = data.get("thread_id")
     reply_body = data.get("reply_body")
 
+    if not from_email:
+        return jsonify({"error": "from_email is required"}), 400
     if not thread_id or not reply_body:
         return jsonify({"error": "thread_id and reply_body are required"}), 400
 
@@ -77,6 +96,7 @@ def reply():
     html = bool(data.get("html", False))
 
     try:
+        replier = GmailReplier(from_email=from_email)
         sent = replier.reply(
             thread_id=thread_id,
             reply_body=reply_body,
@@ -84,6 +104,8 @@ def reply():
             reply_to=reply_to,
         )
         return jsonify({"success": True, "message_id": sent.get("id"), "thread_id": sent.get("threadId")}), 200
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
